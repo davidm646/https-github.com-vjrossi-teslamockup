@@ -1,0 +1,7 @@
+{
+  "name": "Tesla AI Command",
+  "description": "A futuristic dashboard for Tesla owners featuring real-time vehicle stats, controls, and a Gemini-powered AI mechanic and trip planner.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
