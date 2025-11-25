@@ -1,25 +1,50 @@
 import React, { useState, useEffect } from 'react';
 import { VehicleData, AppMode } from './types';
-import { getVehicleData } from './services/teslaService';
+import { getVehicle, login, logout, wakeUp } from './services/teslaService';
+import { hasAuthToken } from './services/actions';
 import VehicleVisualization from './components/VehicleVisualization';
 import StatusGrid from './components/StatusGrid';
 import AiMechanic from './components/AiMechanic';
 import ChargingChart from './components/ChargingChart';
-import { Zap, Command, LogOut, Loader2, AlertTriangle } from 'lucide-react';
+import { Zap, Command, LogOut, Loader2, AlertTriangle, Power } from 'lucide-react';
 
 const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>(AppMode.LOGIN);
   const [token, setToken] = useState('');
   const [vehicleData, setVehicleData] = useState<VehicleData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [wakingUp, setWakingUp] = useState(false);
   const [error, setError] = useState('');
+
+  // Check for existing session on mount
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        // We check both the server-side cookie and local demo state
+        const hasToken = await hasAuthToken();
+        const isDemo = localStorage.getItem('tesla_demo_mode') === 'true';
+
+        if (hasToken || isDemo) {
+            setLoading(true);
+            const data = await getVehicle();
+            setVehicleData(data);
+            setMode(AppMode.DASHBOARD);
+            setLoading(false);
+        }
+      } catch (err) {
+        console.error("Session check failed", err);
+        // If session fails (e.g. invalid token), just stay on login
+      }
+    };
+    checkSession();
+  }, []);
 
   const handleLogin = async (isDemo: boolean) => {
     setLoading(true);
     setError('');
     
     try {
-      const data = await getVehicleData(isDemo ? 'demo' : token, isDemo);
+      const data = await login(isDemo ? 'demo' : token, isDemo);
       setVehicleData(data);
       setMode(AppMode.DASHBOARD);
     } catch (err: any) {
@@ -30,10 +55,30 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await logout();
     setVehicleData(null);
     setToken('');
     setMode(AppMode.LOGIN);
+  };
+
+  const handleWakeUp = async () => {
+    if (!vehicleData) return;
+    setWakingUp(true);
+    try {
+        const success = await wakeUp(vehicleData.id);
+        if (success) {
+            // Re-fetch data after wake up to get latest status
+            const data = await getVehicle();
+            setVehicleData(data);
+        } else {
+            setError("Failed to wake up vehicle.");
+        }
+    } catch (err) {
+        setError("Wake up command failed.");
+    } finally {
+        setWakingUp(false);
+    }
   };
 
   if (mode === AppMode.LOGIN) {
@@ -70,11 +115,6 @@ const App: React.FC = () => {
               </div>
             )}
             
-             {/* Note about CORS */}
-            <div className="text-xs text-neutral-600 leading-relaxed px-1">
-               <strong>Note:</strong> Connecting directly to the Tesla API from a browser usually fails due to CORS security policies unless you are using a proxy.
-            </div>
-
             <button 
               onClick={() => handleLogin(false)}
               disabled={!token || loading}
@@ -103,6 +143,8 @@ const App: React.FC = () => {
     );
   }
 
+  const isAsleep = vehicleData?.state !== 'online';
+
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white selection:bg-blue-500 selection:text-white">
       {/* Navbar */}
@@ -112,9 +154,9 @@ const App: React.FC = () => {
           <span className="font-bold tracking-wide">TESLA COMMAND</span>
         </div>
         <div className="flex items-center gap-4">
-            <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-neutral-800 rounded-full border border-neutral-700">
-                <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                <span className="text-xs text-neutral-300 font-mono">LIVE API</span>
+            <div className={`hidden md:flex items-center gap-2 px-3 py-1 rounded-full border ${isAsleep ? 'bg-neutral-800 border-neutral-700' : 'bg-green-900/20 border-green-800'}`}>
+                <span className={`w-2 h-2 rounded-full ${isAsleep ? 'bg-yellow-500' : 'bg-green-500 animate-pulse'}`}></span>
+                <span className="text-xs text-neutral-300 font-mono">{isAsleep ? 'ASLEEP' : 'CONNECTED'}</span>
             </div>
             <button 
                 onClick={handleLogout}
@@ -128,9 +170,27 @@ const App: React.FC = () => {
       {/* Main Content */}
       <main className="pt-24 pb-12 px-4 md:px-8 max-w-7xl mx-auto space-y-8">
         
+        {/* Asleep Banner */}
+        {isAsleep && (
+             <div className="bg-yellow-900/10 border border-yellow-800/30 rounded-2xl p-4 flex items-center justify-between">
+                 <div className="flex items-center gap-3">
+                     <AlertTriangle className="text-yellow-500" />
+                     <span className="text-yellow-100">Vehicle is currently asleep. Data may be stale.</span>
+                 </div>
+                 <button 
+                    onClick={handleWakeUp}
+                    disabled={wakingUp}
+                    className="px-4 py-2 bg-yellow-600 text-white rounded-lg text-sm font-bold hover:bg-yellow-500 transition-colors flex items-center gap-2"
+                 >
+                     {wakingUp ? <Loader2 className="animate-spin w-4 h-4"/> : <Power className="w-4 h-4"/>}
+                     WAKE UP
+                 </button>
+             </div>
+        )}
+
         {/* Top Section: Visualization & Stats */}
         {vehicleData && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className={`grid grid-cols-1 lg:grid-cols-2 gap-8 ${isAsleep ? 'opacity-70 pointer-events-none filter grayscale-[0.3]' : ''}`}>
                 <VehicleVisualization data={vehicleData} />
                 <div className="flex flex-col gap-8">
                     <StatusGrid data={vehicleData} />
@@ -144,7 +204,7 @@ const App: React.FC = () => {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 space-y-6">
                     {/* Actions Grid */}
-                     <div className="bg-neutral-900 rounded-3xl p-6 border border-neutral-800">
+                     <div className={`bg-neutral-900 rounded-3xl p-6 border border-neutral-800 ${isAsleep ? 'opacity-50 pointer-events-none' : ''}`}>
                         <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
                             <Command size={18} /> Quick Controls
                         </h3>

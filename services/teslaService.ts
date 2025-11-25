@@ -1,4 +1,11 @@
 import { VehicleData } from '../types';
+import { 
+  setAuthToken, 
+  removeAuthToken, 
+  fetchVehicleData, 
+  wakeUpVehicle as wakeUpAction,
+  sendCommand as sendCommandAction 
+} from './actions';
 
 // Mock data for "Demo Mode"
 const MOCK_VEHICLE: VehicleData = {
@@ -45,62 +52,57 @@ const MOCK_VEHICLE: VehicleData = {
   },
 };
 
-export const getVehicleData = async (token: string, useDemo: boolean = false): Promise<VehicleData> => {
-  if (useDemo) {
-    // Simulate network delay
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    return MOCK_VEHICLE;
-  }
+// Local storage key for demo persistence
+const DEMO_MODE_KEY = 'tesla_demo_mode';
 
-  // NOTE: Calling Tesla API directly from browser often triggers CORS errors.
-  // In a real production app, this should go through a proxy server.
-  // We will attempt the call, but if it fails, we throw an error that the UI handles.
-  try {
-    // 1. Get list of vehicles to find the ID
-    const vehiclesResponse = await fetch('https://owner-api.teslamotors.com/api/1/vehicles', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    if (!vehiclesResponse.ok) {
-      throw new Error(`API Error: ${vehiclesResponse.statusText}. CORS or Invalid Token.`);
-    }
-
-    const vehiclesJson = await vehiclesResponse.json();
-    const vehicleId = vehiclesJson.response[0].id_s;
-
-    // 2. Get Vehicle Data
-    const dataResponse = await fetch(`https://owner-api.teslamotors.com/api/1/vehicles/${vehicleId}/vehicle_data`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    if (!dataResponse.ok) {
-      throw new Error('Failed to fetch vehicle data');
-    }
-
-    const dataJson = await dataResponse.json();
-    return dataJson.response;
-
-  } catch (error: any) {
-    console.error("Tesla API Error:", error);
-    throw error;
-  }
+const isDemoMode = () => {
+  if (typeof window === 'undefined') return false;
+  return localStorage.getItem(DEMO_MODE_KEY) === 'true';
 };
 
-export const toggleLock = async (token: string, vehicleId: number, locked: boolean): Promise<boolean> => {
-   // In demo mode, we just return success
-   if (token === 'demo') {
+export const login = async (token: string, useDemo: boolean): Promise<VehicleData> => {
+  if (useDemo) {
+    localStorage.setItem(DEMO_MODE_KEY, 'true');
+    await new Promise(r => setTimeout(r, 800)); // Simulate delay
+    return MOCK_VEHICLE;
+  }
+  
+  localStorage.removeItem(DEMO_MODE_KEY);
+  await setAuthToken(token);
+  return await fetchVehicleData();
+};
+
+export const logout = async () => {
+  localStorage.removeItem(DEMO_MODE_KEY);
+  await removeAuthToken();
+};
+
+export const getVehicle = async (): Promise<VehicleData> => {
+  if (isDemoMode()) {
+    // Randomize slightly for "live" feel in demo
+    const mock = { ...MOCK_VEHICLE };
+    mock.climate_state = { ...mock.climate_state, inside_temp: 22 + Math.random() };
+    return mock;
+  }
+  
+  return await fetchVehicleData();
+};
+
+export const wakeUp = async (vehicleId: number): Promise<boolean> => {
+  if (isDemoMode()) {
+    await new Promise(r => setTimeout(r, 2000));
+    return true;
+  }
+  return await wakeUpAction(vehicleId);
+};
+
+export const toggleLock = async (vehicleId: number, locked: boolean): Promise<boolean> => {
+   if (isDemoMode()) {
      await new Promise(r => setTimeout(r, 500));
      return true;
    }
    
-   // Real API Call placeholder
-   return true;
+   const command = locked ? 'door_lock' : 'door_unlock';
+   const result = await sendCommandAction(vehicleId, command);
+   return result.result;
 };
